@@ -73,7 +73,13 @@ func Login(c *gin.Context) {
 	}
 
 	// 检查是否启用2FA
-	if model.IsTwoFAEnabled(user.Id) {
+	twoFAEnabled, err := model.IsTwoFAEnabled(user.Id)
+	if err != nil {
+		common.SysLog(fmt.Sprintf("Login failed to load 2FA status for user %d: %v", user.Id, err))
+		common.ApiErrorI18n(c, i18n.MsgDatabaseError)
+		return
+	}
+	if twoFAEnabled {
 		// 设置pending session，等待2FA验证
 		session := sessions.Default(c)
 		session.Set("pending_username", user.Username)
@@ -1311,11 +1317,9 @@ func TopUp(c *gin.Context) {
 	}
 	quota, err := model.Redeem(req.Key, id)
 	if err != nil {
-		if errors.Is(err, model.ErrRedeemFailed) {
-			common.ApiErrorI18n(c, i18n.MsgRedeemFailed)
-			return
-		}
-		common.ApiError(c, err)
+		// 不向用户暴露兑换失败的细分原因，避免攻击者根据错误类型判断兑换码状态。
+		common.ApiErrorI18n(c, i18n.MsgRedeemFailed)
+		logger.LogError(c, fmt.Sprintf("failed to redeem key %s for user %d: %s", req.Key, id, err.Error()))
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
